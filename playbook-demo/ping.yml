@@ -1,0 +1,197 @@
+# ping.yml
+---
+- name: Ping test basics
+  hosts: all
+  vars_files: 
+    - ./variables.yml
+
+  tasks:
+  - name: Ping all servers
+    action: ping
+    
+  - name: Install Nginx
+    apt:
+      name: nginx
+      state: present
+    become: true
+
+  - name: Install mysql
+    apt:
+      name: 
+        - mysql-server
+        - python3-pymysql
+        - python-mysqldb
+      update-cache: yes
+    become: true
+
+  # - name: install mysql python-pymysql
+  #   pip:
+  #     name: MySQL-python
+  #   become: true
+
+  - name: Start the MySQL service
+    service: 
+      name: mysql 
+      state: started
+      enabled: true
+    become: true
+
+  - name: Add apt repository
+    apt_repository:
+      repo: "deb http://archive.ubuntu.com/ubuntu/ bionic universe"
+      state: present
+    become: true
+
+  - name: Install php-cli
+    apt:
+      name:
+        - php-fpm 
+        - php-mysql
+    become: true 
+
+  - name: Install Php packages
+    apt:
+      name: "{{ packages }}"
+    vars:
+      packages:
+      - php-fpm 
+      - php-common 
+      - php-mbstring 
+      - php-xmlrpc 
+      - php-soap 
+      - php-gd 
+      - php-xml 
+      - php-intl 
+      - php-mysql 
+      - php-cli 
+      - php-zip 
+      - php-curl
+    become: true
+    register: isPackageInstalled
+
+  - name: Restart nginx and php-cli
+    service: 
+      name: "{{ item }}"
+      state: restarted
+      enabled: true
+    become: true
+    with_items:
+      - nginx
+      - php7.2-fpm
+    when: isPackageInstalled.changed
+
+  - name: Change Root User password
+    mysql_user:
+      name: root 
+      host: "{{ item }}" 
+      password: "{{ mysql_pass }}"
+      login_user: root
+      login_host: localhost
+      login_password: ''
+      # check_implicit_admin: yes
+      priv: "*.*:ALL,GRANT"
+    with_items:
+      - "{{ ansible_hostname }}"
+      - 127.0.0.1
+      - ::1
+      - localhost 
+    become: true
+
+  - name: Setup Ngnix VHost
+    template: 
+      src: ./sites-available.tpl
+      dest: /etc/nginx/sites-available/{{ domain_name }}.conf
+    become: true
+
+  - name: Link site-available and site-enabled
+    file:
+      src: /etc/nginx/sites-available/{{ domain_name }}.conf
+      dest: /etc/nginx/sites-enabled/{{ domain_name }}.conf
+      state: link
+    become: true
+
+  - name: Unlink default site settings
+    file:
+      path: /etc/nginx/sites-enabled/default
+      state: absent
+    become: true
+
+  - name: Create site directory
+    file:
+      path: "/var/www/html/{{ domain_name }}"
+      state: directory
+    become: true
+    register: isDomainFolderCreated
+
+  # - name: Download foo.conf
+  #   get_url:
+  #     url: https://wordpress.org/latest.tar.gz
+  #     dest: /tmp
+  #   become: true
+
+  - name: Unarchive a file that needs to be downloaded (added in 2.0)
+    unarchive:
+      src: https://wordpress.org/latest.tar.gz
+      dest: "/var/www/html/{{ domain_name }}"
+      remote_src: yes
+      extra_opts: 
+      - --strip-components=1
+    become: true
+    when: isDomainFolderCreated.changed
+
+  - name: Create new db
+    mysql_db:
+      login_user: root
+      login_password: "{{ mysql_pass }}"
+      name: "`{{ domain_name }}_db`"
+      state: present
+    when: isDomainFolderCreated.changed
+
+  - name: Add wordpress_user
+    mysql_user:
+      login_user: root
+      login_password: "{{ mysql_pass }}"
+      name: wordpress_user
+      password: "{{ wordpress_user_pass }}"
+      priv: "`{{ domain_name }}_db`.*:ALL,GRANT"
+      host: "{{ item }}"
+      state: present
+    with_items:
+      - "{{ ansible_hostname }}"
+      - 127.0.0.1
+      - ::1
+      - localhost
+      - 0.0.0.0
+
+  - name: set wp config file
+    template: 
+      src: ./wp-config.tpl
+      dest: "/var/www/html/{{ domain_name }}/wp-config.php"
+    become: true
+    register: isConfigChanged
+  
+  - name: change owner for /var/www/html
+    file:
+      path: /var/www/html
+      owner: www-data
+      group: www-data
+      mode: '0755'
+    register: isPermissionChanged
+    become: true
+
+  - name: Restart nginx and php-cli
+    service: 
+      name: "{{ item }}"
+      state: restarted
+      enabled: true
+    become: true
+    with_items:
+      - nginx
+      - php7.2-fpm
+    when: isConfigChanged.changed or isPermissionChanged.changed  
+
+  
+
+  
+
+

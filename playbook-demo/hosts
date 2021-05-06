@@ -1,0 +1,6 @@
+[all]
+vubuntu1 ansible_host=machineHostNameorIP
+
+[all:vars]
+ansible_user=machineUser
+ansible_password=machinePass
